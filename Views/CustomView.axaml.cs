@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
@@ -10,9 +11,7 @@ namespace jsonpath.Views;
 
 public partial class CustomView : UserControl
 {
-    private static readonly JsonElement jsonNull = JsonSerializer.Deserialize<JsonElement>("null");
-
-    private JsonElement parsed;
+    private object? parsed;
     private JsonSerializerOptions jsonOptions;
     private JsonSerializerOptions jsonOptionsIgnoreNull;
 
@@ -36,7 +35,7 @@ public partial class CustomView : UserControl
                 errorMessage.Content = "";
                 if (string.IsNullOrEmpty(richTextBox.Text))
                     return;
-                parsed = JsonSerializer.Deserialize<JsonElement>(richTextBox.Text);
+                parsed = Deserialize(richTextBox.Text);
                 richTextBox.Text = JsonSerializer.Serialize(parsed, jsonOptions);
             }
             catch (Exception e)
@@ -78,7 +77,7 @@ public partial class CustomView : UserControl
         };
     }
 
-    class JsonObjectConverter : JsonConverter<JsonElement>
+    class JsonObjectConverter : JsonConverter<Dictionary<string, object?>>
     {
         private JsonSerializerOptions regularOptions;
 
@@ -87,32 +86,32 @@ public partial class CustomView : UserControl
             this.regularOptions = regularOptions;
         }
 
-        public override JsonElement Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        public override Dictionary<string, object?> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
             throw new NotImplementedException();
         }
 
-        public override void Write(Utf8JsonWriter writer, JsonElement value, JsonSerializerOptions options)
+        public override void Write(Utf8JsonWriter writer, Dictionary<string, object?> value, JsonSerializerOptions options)
         {
-            if (value.ValueKind == JsonValueKind.Object)
+            if (GetObject(value, out var map))
             {
                 writer.WriteStartObject();
-                foreach (var item in value.EnumerateObject())
+                foreach (var pair in map)
                 {
-                    if (item.Value.ValueKind == JsonValueKind.Null)
+                    if (pair.Value == null)
                         continue;
 
-                    writer.WritePropertyName(item.Name);
-                    JsonSerializer.Serialize(writer, item.Value, options);
+                    writer.WritePropertyName(pair.Key);
+                    JsonSerializer.Serialize(writer, pair.Value, options);
                 }
                 writer.WriteEndObject();
                 return;
             }
 
-            if (value.ValueKind == JsonValueKind.Array)
+            if (GetArray(value, out var list))
             {
                 writer.WriteStartArray();
-                foreach (var item in value.EnumerateArray())
+                foreach (var item in list)
                 {
                     JsonSerializer.Serialize(writer, item, options);
                 }
@@ -136,32 +135,19 @@ public partial class CustomView : UserControl
                 return;
             }
 
-            var (firstPart, jsonPathParts) = CustomSplit(jsonPath);
+            var jsonPathParts = CustomSplit(jsonPath);
 
-            IEnumerable<JsonElement> parsedList = new[] { this.parsed };
+            IEnumerable<object?> parsedList = new[] { this.parsed };
 
+            var nullIfNotExistent = nullIfNotExistentCheckBox.IsChecked ?? false;
+            foreach (var part in jsonPathParts)
             {
-                // Do this for the first part
-                var (first, rest) = SplitFilter(firstPart);
-                if (first != "$")
-                    throw new Exception();
-
-                foreach (var restPart in rest)
-                    parsedList = GetFiltered(restPart, parsedList);
-            }
-
-            bool nullIfNotExistent = nullIfNotExistentCheckBox.IsChecked ?? false;
-            foreach (var (type, part) in jsonPathParts)
-            {
-                var (first, rest) = SplitFilter(part);
-
-                if (type == '.')
-                    parsedList = GetProperty(parsedList, first, nullIfNotExistent);
-                else if (type == '%')
-                    parsedList = ApplyDirective(part, parsedList);
-
-                foreach (var restPart in rest)
-                    parsedList = GetFiltered(restPart, parsedList);
+                if (part[0] == '.')
+                    parsedList = GetProperty(part[1..], parsedList, nullIfNotExistent);
+                else if (part[0] == '%')
+                    parsedList = ApplyDirective(part[1..], parsedList);
+                else
+                    parsedList = GetFiltered(part, parsedList);
             }
 
             var text = JsonSerializer.Serialize(parsedList, ignoreNullCheckBox.IsChecked ?? false ? jsonOptionsIgnoreNull : jsonOptions);
@@ -174,204 +160,247 @@ public partial class CustomView : UserControl
         }
     }
 
-    private static (string first, List<(char, string)> parts) CustomSplit(string s)
+    private static List<string> CustomSplit(string s)
     {
-        var indexes = new List<int>();
-        for (int i = 0; i < s.Length; i++)
+        if (s[0] != '$')
+            throw new Exception();
+        var parts = new List<string>();
+        int i = 1;
+        while (i < s.Length)
         {
-            if (s[i] == '.' || s[i] == '%')
-                indexes.Add(i);
-            else if (s[i] == '[')
+            char c = s[i];
+            if (c == '.' || c == '%')
             {
-                i++;
+                int start = i++;
+                if (s[i] == '[')
+                {
+                    while (s[i] != ']')
+                        i++;
+                    i++;
+                    parts.Add(s[start..i]);
+                }
+                else
+                {
+                    while (i < s.Length && char.IsAsciiLetter(s[i]))
+                        i++;
+                    parts.Add(s[start..i]);
+                }
+                continue;
+            }
+            if (c == '[')
+            {
+                int start = i++;
                 while (s[i] != ']')
                     i++;
+                i++;
+                parts.Add(s[start..i]);
+                continue;
             }
+            throw new Exception($"Unexpected char: {c}");
         }
-
-        var list = new List<(char, string)>(indexes.Count);
-        for (int j = 0; j < indexes.Count; j++)
-        {
-            var idx = indexes[j];
-            var nextIdx = j + 1 < indexes.Count ? indexes[j + 1] : s.Length;
-            list.Add((s[idx], s[(idx + 1)..nextIdx]));
-        }
-        return (indexes.Count == 0 ? s : s[..indexes[0]], list);
+        return parts;
     }
 
-    private static IEnumerable<JsonElement> GetProperty(IEnumerable<JsonElement> elements, string property, bool nullIfNotExistent)
+    private static IEnumerable<object?> GetProperty(string property, IEnumerable<object?> elements, bool nullIfNotExistent)
     {
-        foreach (var je in elements)
+        bool isExcludeMapping = false;
+        string[]? mappingParts = null;
+        if (property[0] == '[')
         {
-            if (je.ValueKind == JsonValueKind.Object && je.TryGetProperty(property, out var value))
+            isExcludeMapping = property[1] == '-';
+            int i = isExcludeMapping ? 2 : 1;
+            mappingParts = property[i..^1].Split(",");
+        }
+
+        foreach (var item in elements)
+        {
+            if (mappingParts != null)
+            {
+                var map = new Dictionary<string, object?>();
+                foreach (var pair in EnumerateObject(item))
+                {
+                    if (mappingParts.Contains(pair.Key) != isExcludeMapping)
+                        map[pair.Key] = pair.Value;
+                }
+                yield return map;
+            }
+            else if (GetObject(item, out var map) && map.TryGetValue(property, out var value))
                 yield return value;
             else if (nullIfNotExistent)
-                yield return jsonNull;
+                yield return null;
         }
     }
 
-    private static IEnumerable<JsonElement> ApplyDirective(string type, IEnumerable<JsonElement> elements)
+    private static IEnumerable<object?> ApplyDirective(string type, IEnumerable<object?> elements)
     {
+        bool sortByCountDesc = false;
         switch (type)
         {
             case "c":
                 {
                     var count = elements.Count();
-                    return [ConvertIntToJsonElement(count)];
+                    return [(double)count];
                 }
             case "k":
                 {
                     var set = new HashSet<string>();
                     foreach (var item in elements)
                     {
-                        foreach (var key in item.EnumerateObject())
+                        foreach (var pair in EnumerateObject(item))
                         {
-                            set.Add(key.Name);
+                            set.Add(pair.Key);
                         }
                     }
-                    return set.Select(x => ConvertStringToJsonElement(x));
+                    return set;
                 }
-            case "kc":
             case "kcs":
+                sortByCountDesc = true;
+                goto case "kc";
+            case "kc":
                 {
                     var counts = new Dictionary<string, int>();
                     foreach (var item in elements)
                     {
-                        foreach (var key in item.EnumerateObject())
+                        foreach (var pair in EnumerateObject(item))
                         {
-                            counts.TryGetValue(key.Name, out int n);
-                            counts[key.Name] = n + 1;
+                            counts.TryGetValue(pair.Key, out int n);
+                            counts[pair.Key] = n + 1;
                         }
                     }
-                    return [ConvertMapToJsonElement(counts, type == "kcs")];
+                    return [ConvertToSorted(counts, sortByCountDesc)];
                 }
             case "u":
                 {
                     var set = new HashSet<string>();
-                    var returnList = new List<JsonElement>();
+                    var returnList = new List<object?>();
                     foreach (var item in elements)
                     {
-                        if (item.ValueKind == JsonValueKind.String)
+                        if (item is string s)
                         {
-                            if (set.Add(item.GetString() ?? throw new Exception()))
+                            if (set.Add(s))
                                 returnList.Add(item);
                         }
-                        else if (item.ValueKind == JsonValueKind.Number)
+                        else if (TryGetDouble(item, out var d))
                         {
-                            if (TryGetNumber(item, out double d))
-                            {
-                                if (set.Add(d + ""))
-                                    returnList.Add(item);
-                            }
+                            if (set.Add(d + ""))
+                                returnList.Add(item);
                         }
-                        else if (item.ValueKind == JsonValueKind.True || item.ValueKind == JsonValueKind.False)
+                        else if (item is bool b)
                         {
-                            if (set.Add(item.ValueKind == JsonValueKind.True ? "true" : "false"))
+                            if (set.Add(b ? "true" : "false"))
                                 returnList.Add(item);
                         }
                     }
                     return returnList;
                 }
-            case "uc":
             case "ucs":
+                sortByCountDesc = true;
+                goto case "uc";
+            case "uc":
                 {
                     var counts = new Dictionary<string, int>();
                     foreach (var item in elements)
                     {
-                        if (item.ValueKind == JsonValueKind.String)
+                        if (item is string s)
                         {
-                            var key = item.GetString() ?? throw new Exception();
+                            var key = s;
                             counts.TryGetValue(key, out int n);
                             counts[key] = n + 1;
                         }
-                        else if (item.ValueKind == JsonValueKind.Number)
+                        else if (TryGetDouble(item, out var d))
                         {
-                            if (TryGetNumber(item, out double d))
-                            {
-                                var key = d + "";
-                                counts.TryGetValue(key, out int n);
-                                counts[key] = n + 1;
-                            }
+                            var key = d + "";
+                            counts.TryGetValue(key, out int n);
+                            counts[key] = n + 1;
                         }
-                        else if (item.ValueKind == JsonValueKind.True || item.ValueKind == JsonValueKind.False)
+                        else if (item is bool b)
                         {
-                            var key = item.ValueKind == JsonValueKind.True ? "true" : "false";
+                            var key = b ? "true" : "false";
                             counts.TryGetValue(key, out int n);
                             counts[key] = n + 1;
                         }
                     }
-                    return [ConvertMapToJsonElement(counts, type == "ucs")];
+                    return [ConvertToSorted(counts, sortByCountDesc)];
                 }
         }
         throw new Exception($"Unknown directive: '{type}'");
     }
 
-    private static JsonElement ConvertIntToJsonElement(int i)
-    {
-        return JsonSerializer.Deserialize<JsonElement>(i + "");
-    }
-
-    private static JsonElement ConvertStringToJsonElement(string s)
-    {
-        return JsonSerializer.Deserialize<JsonElement>('"' + s + '"');
-    }
-
-    private static JsonElement ConvertMapToJsonElement(Dictionary<string, int> o, bool sortByCountDesc)
+    private static Dictionary<string, int> ConvertToSorted(Dictionary<string, int> o, bool sortByCountDesc)
     {
         if (sortByCountDesc)
-        {
-            o = o.OrderByDescending(x => x.Value).ToDictionary(x => x.Key, x => x.Value);
-        }
-        return JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(o));
+            return o.OrderByDescending(x => x.Value).ToDictionary(x => x.Key, x => x.Value);
+        return o;
     }
 
-    private static (string first, List<string> rest) SplitFilter(string part)
+    private static object? Deserialize(string s)
     {
-        var i = part.IndexOf('[');
-        if (i < 0)
-            return (part, []);
-
-        var first = part[..i];
-        var parts = new List<string>();
-        while (true)
-        {
-            var i2 = part.IndexOf('[', i + 1);
-            if (i2 < 0)
-            {
-                parts.Add(part[i..]);
-                return (first, parts);
-            }
-
-            parts.Add(part[i..i2]);
-            i = i2;
-        }
+        var parsed = JsonSerializer.Deserialize<JsonElement>(s);
+        return JsonElementToObject(parsed);
     }
 
-    private static bool TryGetNumber(JsonElement je, out double value)
+    static object? JsonElementToObject(JsonElement jsonElement)
     {
-        if (je.TryGetInt32(out int n))
+        switch (jsonElement.ValueKind)
         {
-            value = n;
-            return true;
+            case JsonValueKind.Null:
+                return null;
+            case JsonValueKind.True:
+                return true;
+            case JsonValueKind.False:
+                return false;
+            case JsonValueKind.Number:
+                return jsonElement.Deserialize<double>();
+            case JsonValueKind.String:
+                return jsonElement.Deserialize<string>();
+            case JsonValueKind.Array:
+                return jsonElement.EnumerateArray().Select(JsonElementToObject).ToList();
+            case JsonValueKind.Object:
+                var map = new Dictionary<string, object?>();
+                foreach (var pair in jsonElement.EnumerateObject())
+                {
+                    map[pair.Name] = JsonElementToObject(pair.Value);
+                }
+                return map;
         }
-        if (je.TryGetDouble(out double d))
-        {
-            value = d;
-            return true;
-        }
+        throw new Exception($"Unexpected json kind: {jsonElement.ValueKind}");
+    }
 
-        value = default;
+    private static Dictionary<string, object?> EnumerateObject(object? o)
+    {
+        return (o as Dictionary<string, object?>) ?? throw new Exception("could not cast to map");
+    }
+
+    private static bool GetArray(object? o, [MaybeNullWhen(false)] out List<object?> list)
+    {
+        if (o is List<object?> l)
+        {
+            list = l;
+            return true;
+        }
+        list = default;
         return false;
     }
 
-    private static IEnumerable<JsonElement> GetFiltered(string filterExpression, IEnumerable<JsonElement> mapped)
+    private static bool GetObject(object? o, [MaybeNullWhen(false)] out Dictionary<string, object?> map)
+    {
+        if (o is Dictionary<string, object?> m)
+        {
+            map = m;
+            return true;
+        }
+        map = default;
+        return false;
+    }
+
+    private static IEnumerable<object?> GetFiltered(string filterExpression, IEnumerable<object?> mapped)
     {
         var mappedValues = mapped.SelectMany(x =>
         {
-            if (x.ValueKind == JsonValueKind.Array)
-                return x.EnumerateArray();
-            else if (x.ValueKind == JsonValueKind.Object)
-                return x.EnumerateObject().Select(x => x.Value);
+            if (GetArray(x, out var list))
+                return list;
+            else if (GetObject(x, out var m))
+                return m.Select(x => x.Value);
             else
                 throw new Exception();
         });
@@ -560,45 +589,34 @@ public partial class CustomView : UserControl
         }
     }
 
-    private static object? GetValue(object? o)
+    private static bool TryGetDouble(object? o, out double ret)
     {
-        if (o is JsonElement je)
+        if (o is double d)
         {
-            if (je.ValueKind == JsonValueKind.Number)
-            {
-                if (TryGetNumber(je, out double d))
-                    return d;
-                throw new Exception();
-            }
-            if (je.ValueKind == JsonValueKind.String)
-                return je.GetString();
-            if (je.ValueKind == JsonValueKind.Null)
-                return null;
-            if (je.ValueKind == JsonValueKind.True)
-                return true;
-            if (je.ValueKind == JsonValueKind.False)
-                return false;
+            ret = d;
+            return true;
         }
-        return o;
+        if (o is int i)
+        {
+            ret = (double)i;
+            return true;
+        }
+        ret = 0;
+        return false;
     }
 
     private static bool IsTruthy(object? o)
     {
-        o = GetValue(o);
-
         if (o == null) return false;
         if (o is bool b) return b;
         if (o is string s) return s.Length > 0;
-        if (o is double d) return d != 0.0;
+        if (TryGetDouble(o, out var d)) return d != 0.0;
         return true;
     }
 
     private static bool Compare(object? o1, string token, object? o2)
     {
-        o1 = GetValue(o1);
-        o2 = GetValue(o2);
-
-        if (o1 is double d1 && o2 is double d2)
+        if (TryGetDouble(o1, out var d1) && TryGetDouble(o2, out var d2))
         {
             return token switch
             {
@@ -626,7 +644,7 @@ public partial class CustomView : UserControl
         public required IExpression First { get; set; }
         public required List<(string token, IExpression expression)> Rest { get; set; }
 
-        public object? Evaluate(JsonElement at)
+        public object? Evaluate(object? at)
         {
             var value = First.Evaluate(at);
             foreach (var (token, expression) in Rest)
@@ -651,12 +669,12 @@ public partial class CustomView : UserControl
 
     interface IExpression
     {
-        object? Evaluate(JsonElement at);
+        object? Evaluate(object? at);
     }
 
     class AtExpression : IExpression
     {
-        public object? Evaluate(JsonElement at)
+        public object? Evaluate(object? at)
         {
             return at;
         }
@@ -667,14 +685,13 @@ public partial class CustomView : UserControl
         public required IExpression Expression { get; set; }
         public required string Prop { get; set; }
 
-        public object? Evaluate(JsonElement at)
+        public object? Evaluate(object? at)
         {
             var baseValue = Expression.Evaluate(at);
             if (baseValue == null)
                 return null;
 
-            var je = (JsonElement)baseValue;
-            if (je.ValueKind == JsonValueKind.Object && je.TryGetProperty(Prop, out var value))
+            if (GetObject(baseValue, out var map) && map.TryGetValue(Prop, out var value))
             {
                 return value;
             }
@@ -686,7 +703,7 @@ public partial class CustomView : UserControl
     {
         public required object? Value { get; set; }
 
-        public object? Evaluate(JsonElement at)
+        public object? Evaluate(object? at)
         {
             return Value;
         }
