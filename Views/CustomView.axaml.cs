@@ -181,7 +181,7 @@ public partial class CustomView : UserControl
                 }
                 else
                 {
-                    while (i < s.Length && char.IsAsciiLetter(s[i]))
+                    while (i < s.Length && (s[i] == '_' || char.IsAsciiLetter(s[i])))
                         i++;
                     parts.Add(s[start..i]);
                 }
@@ -441,7 +441,11 @@ public partial class CustomView : UserControl
                 var prop = tokens[i++];
                 AddToNode(ref firstExpr, precedence, expression =>
                 {
-                    return new DotAccessExpression { Expression = expression, Prop = prop };
+                    return new DotAccessExpression
+                    {
+                        Expression = expression,
+                        Prop = prop
+                    };
                 });
                 continue;
             }
@@ -449,13 +453,12 @@ public partial class CustomView : UserControl
             var expr = GetExpression(tokens[i++]);
             AddToNode(ref firstExpr, precedence, expression =>
             {
-                var newOne = new TreeExpression
+                return new TreeExpression
                 {
                     First = expression,
                     Precedence = precedence,
                     Rest = [(op, expr)],
                 };
-                return newOne;
             });
         }
 
