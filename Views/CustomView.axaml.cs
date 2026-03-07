@@ -233,7 +233,6 @@ public partial class CustomView : UserControl
 
     private static IEnumerable<object?> ApplyDirective(string type, IEnumerable<object?> elements)
     {
-        bool sortByCountDesc = false;
         switch (type)
         {
             case "c":
@@ -253,9 +252,6 @@ public partial class CustomView : UserControl
                     }
                     return set;
                 }
-            case "kcs":
-                sortByCountDesc = true;
-                goto case "kc";
             case "kc":
                 {
                     var counts = new Dictionary<string, int>();
@@ -267,7 +263,7 @@ public partial class CustomView : UserControl
                             counts[pair.Key] = n + 1;
                         }
                     }
-                    return [ConvertToSorted(counts, sortByCountDesc)];
+                    return [ConvertToSorted(counts)];
                 }
             case "u":
                 {
@@ -293,9 +289,6 @@ public partial class CustomView : UserControl
                     }
                     return returnList;
                 }
-            case "ucs":
-                sortByCountDesc = true;
-                goto case "uc";
             case "uc":
                 {
                     var counts = new Dictionary<string, int>();
@@ -320,17 +313,15 @@ public partial class CustomView : UserControl
                             counts[key] = n + 1;
                         }
                     }
-                    return [ConvertToSorted(counts, sortByCountDesc)];
+                    return [ConvertToSorted(counts)];
                 }
         }
         throw new Exception($"Unknown directive: '{type}'");
     }
 
-    private static Dictionary<string, int> ConvertToSorted(Dictionary<string, int> o, bool sortByCountDesc)
+    private static Dictionary<string, int> ConvertToSorted(Dictionary<string, int> o)
     {
-        if (sortByCountDesc)
-            return o.OrderByDescending(x => x.Value).ToDictionary(x => x.Key, x => x.Value);
-        return o;
+        return o.OrderByDescending(x => x.Value).ToDictionary(x => x.Key, x => x.Value);
     }
 
     private static object? Deserialize(string s)

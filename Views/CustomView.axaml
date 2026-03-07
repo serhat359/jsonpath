@@ -11,7 +11,7 @@
 			<TextBox  Name="richTextBox" Grid.Row="0" Grid.Column="0" AcceptsReturn="True"></TextBox>
 			<TextBox  Name="richTextBox2" Grid.Row="0" Grid.Column="1" AcceptsReturn="True"></TextBox>
 			<Label    Name="errorMessage" Grid.Row="1" Grid.Column="0" TextElement.Foreground="Red">This is an error message</Label>
-			<TextBox  Name="jsonPathTextBox" Grid.Row="1" Grid.Column="1"  Watermark="$.store[*].books[?(@.id > 5)].author%c%k%u%kc%uc%kcs%ucs"></TextBox>
+			<TextBox  Name="jsonPathTextBox" Grid.Row="1" Grid.Column="1"  Watermark="$.store[*].books[?(@.id > 5)].author%c%k%u%kc%uc"></TextBox>
 			<CheckBox Name="nullIfNotExistentCheckBox" Grid.Row="2" Grid.Column="1">Non existent property as null</CheckBox>
 			<CheckBox Name="ignoreNullCheckBox" Grid.Row="3" Grid.Column="1">Ignore null valued keys</CheckBox>
 		</Grid>
