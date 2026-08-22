@@ -15,7 +15,7 @@
 					CornerRadius="2"
 					Grid.Row="0" Grid.Column="0">
 				<edit:TextEditor Name="richTextBox"
-							FontFamily="Consolas,Cascadia Code,Menlo,Monospace"
+							FontFamily="Ubuntu Mono,Consolas,Cascadia Code,Menlo,Monospace"
 							HorizontalScrollBarVisibility="Auto"
 							VerticalScrollBarVisibility="Visible"
 							FontWeight="Light"
@@ -31,7 +31,7 @@
 					CornerRadius="2"
 					Grid.Row="0" Grid.Column="1">
 				<edit:TextEditor Name="richTextBox2"
-							FontFamily="Consolas,Cascadia Code,Menlo,Monospace"
+							FontFamily="Ubuntu Mono,Consolas,Cascadia Code,Menlo,Monospace"
 							HorizontalScrollBarVisibility="Auto"
 							VerticalScrollBarVisibility="Visible"
 							FontWeight="Light"
