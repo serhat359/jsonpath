@@ -44,6 +44,6 @@
 			<Label    Name="errorMessage" Grid.Row="1" Grid.Column="0" TextElement.Foreground="Red">This is an error message</Label>
 			<TextBox  Name="jsonPathTextBox" Grid.Row="1" Grid.Column="1"  Watermark="$.store[*].books[?(@.id > 5)].author%c%k%u%kc%uc"></TextBox>
 			<CheckBox Name="nullIfNotExistentCheckBox" Grid.Row="2" Grid.Column="1">Non existent property as null</CheckBox>
-			<CheckBox Name="ignoreNullCheckBox" Grid.Row="3" Grid.Column="1">Ignore null valued keys</CheckBox>
+			<CheckBox Name="ignoreNullCheckBox" Grid.Row="3" Grid.Column="1">Ignore null</CheckBox>
 		</Grid>
 </UserControl>

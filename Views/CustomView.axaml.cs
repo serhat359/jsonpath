@@ -31,7 +31,8 @@ public partial class CustomView : UserControl
     {
         jsonOptions = CreateOptions();
         jsonOptionsIgnoreNull = CreateOptions();
-        jsonOptionsIgnoreNull.Converters.Add(new JsonObjectConverter(jsonOptions));
+        jsonOptionsIgnoreNull.Converters.Add(new JsonObjectConverter());
+        jsonOptionsIgnoreNull.Converters.Add(new JsonArrayConverter());
 
         SetJsonLanguage(richTextBox);
         SetJsonLanguage(richTextBox2);
@@ -105,59 +106,57 @@ public partial class CustomView : UserControl
 
     class JsonObjectConverter : JsonConverter<Dictionary<string, object?>>
     {
-        private JsonSerializerOptions regularOptions;
-
-        public JsonObjectConverter(JsonSerializerOptions regularOptions)
-        {
-            this.regularOptions = regularOptions;
-        }
-
         public override Dictionary<string, object?> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
             throw new NotImplementedException();
         }
 
-        public override void Write(Utf8JsonWriter writer, Dictionary<string, object?> value, JsonSerializerOptions options)
+        public override void Write(Utf8JsonWriter writer, Dictionary<string, object?> map, JsonSerializerOptions options)
         {
-            if (GetObject(value, out var map))
+            writer.WriteStartObject();
+            foreach (var pair in map)
             {
-                writer.WriteStartObject();
-                foreach (var pair in map)
-                {
-                    if (pair.Value == null)
-                        continue;
+                if (pair.Value == null)
+                    continue;
 
-                    writer.WritePropertyName(pair.Key);
-                    JsonSerializer.Serialize(writer, pair.Value, options);
-                }
-                writer.WriteEndObject();
-                return;
+                writer.WritePropertyName(pair.Key);
+                JsonSerializer.Serialize(writer, pair.Value, options);
             }
+            writer.WriteEndObject();
+        }
+    }
 
-            if (GetArray(value, out var list))
+    class JsonArrayConverter : JsonConverter<List<object?>>
+    {
+        public override List<object?>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override void Write(Utf8JsonWriter writer, List<object?> list, JsonSerializerOptions options)
+        {
+            writer.WriteStartArray();
+            foreach (var item in list)
             {
-                writer.WriteStartArray();
-                foreach (var item in list)
-                {
-                    JsonSerializer.Serialize(writer, item, options);
-                }
-                writer.WriteEndArray();
-                return;
-            }
+                if (item == null)
+                    continue;
 
-            JsonSerializer.Serialize(writer, value, regularOptions);
+                JsonSerializer.Serialize(writer, item, options);
+            }
+            writer.WriteEndArray();
         }
     }
 
     private void RerenderJson()
     {
+        bool ignoreNull = ignoreNullCheckBox.IsChecked ?? false;
         try
         {
             errorMessage.Content = "";
             var jsonPath = jsonPathTextBox.Text ?? "";
             if (jsonPath == "")
             {
-                richTextBox2.Text = JsonSerializer.Serialize(this.parsed, ignoreNullCheckBox.IsChecked ?? false ? jsonOptionsIgnoreNull : jsonOptions);
+                richTextBox2.Text = JsonSerializer.Serialize(this.parsed, ignoreNull ? jsonOptionsIgnoreNull : jsonOptions);
                 return;
             }
 
@@ -169,14 +168,16 @@ public partial class CustomView : UserControl
             foreach (var part in jsonPathParts)
             {
                 if (part[0] == '.')
-                    parsedList = GetProperty(part[1..], parsedList, nullIfNotExistent);
+                    parsedList = GetProperty(part[1..], parsedList, nullIfNotExistent, ignoreNull);
+                else if (part[0] == '[' && part[1] == '"')
+                    parsedList = GetProperty(part[2..^2], parsedList, nullIfNotExistent, ignoreNull);
                 else if (part[0] == '%')
-                    parsedList = ApplyDirective(part[1..], parsedList);
+                    parsedList = ApplyDirective(part[1..], parsedList, ignoreNull);
                 else
-                    parsedList = GetFiltered(part, parsedList);
+                    parsedList = GetFiltered(part, parsedList, ignoreNull);
             }
 
-            var text = JsonSerializer.Serialize(parsedList, ignoreNullCheckBox.IsChecked ?? false ? jsonOptionsIgnoreNull : jsonOptions);
+            var text = JsonSerializer.Serialize(parsedList, ignoreNull ? jsonOptionsIgnoreNull : jsonOptions);
             richTextBox2.Text = text;
             richTextBox2.TextArea.Caret.BringCaretToView();
         }
@@ -207,7 +208,7 @@ public partial class CustomView : UserControl
                 }
                 else
                 {
-                    while (i < s.Length && (s[i] == '_' || char.IsAsciiLetter(s[i])))
+                    while (i < s.Length && (s[i] == '_' || IsLetter(s[i]) || IsDigit(s[i])))
                         i++;
                     parts.Add(s[start..i]);
                 }
@@ -216,8 +217,19 @@ public partial class CustomView : UserControl
             if (c == '[')
             {
                 int start = i++;
-                while (s[i] != ']')
+                int count = 1;
+                while (true)
+                {
+                    if (s[i] == ']')
+                    {
+                        count--;
+                        if (count == 0)
+                            break;
+                    }
+                    else if (s[i] == '[')
+                        count++;
                     i++;
+                }
                 i++;
                 parts.Add(s[start..i]);
                 continue;
@@ -227,7 +239,7 @@ public partial class CustomView : UserControl
         return parts;
     }
 
-    private static IEnumerable<object?> GetProperty(string property, IEnumerable<object?> elements, bool nullIfNotExistent)
+    private static IEnumerable<object?> GetProperty(string property, IEnumerable<object?> elements, bool nullIfNotExistent, bool ignoreNull)
     {
         bool isExcludeMapping = false;
         string[]? mappingParts = null;
@@ -251,19 +263,24 @@ public partial class CustomView : UserControl
                 yield return map;
             }
             else if (GetObject(item, out var map) && map.TryGetValue(property, out var value))
+            {
+                if (value == null && ignoreNull && !nullIfNotExistent)
+                    continue;
+
                 yield return value;
+            }
             else if (nullIfNotExistent)
                 yield return null;
         }
     }
 
-    private static IEnumerable<object?> ApplyDirective(string type, IEnumerable<object?> elements)
+    private static IEnumerable<object?> ApplyDirective(string type, IEnumerable<object?> elements, bool ignoreNull)
     {
         switch (type)
         {
             case "c":
                 {
-                    var count = elements.Count();
+                    var count = ignoreNull ? elements.Count(x => x != null) : elements.Count();
                     return [(double)count];
                 }
             case "k":
@@ -273,6 +290,9 @@ public partial class CustomView : UserControl
                     {
                         foreach (var pair in EnumerateObject(item))
                         {
+                            if (pair.Value == null && ignoreNull)
+                                continue;
+
                             set.Add(pair.Key);
                         }
                     }
@@ -285,6 +305,9 @@ public partial class CustomView : UserControl
                     {
                         foreach (var pair in EnumerateObject(item))
                         {
+                            if (pair.Value == null && ignoreNull)
+                                continue;
+
                             counts.TryGetValue(pair.Key, out int n);
                             counts[pair.Key] = n + 1;
                         }
@@ -310,6 +333,14 @@ public partial class CustomView : UserControl
                         else if (item is bool b)
                         {
                             if (set.Add(b ? "true" : "false"))
+                                returnList.Add(item);
+                        }
+                        else if (item == null)
+                        {
+                            if (ignoreNull)
+                                continue;
+
+                            if (set.Add("null"))
                                 returnList.Add(item);
                         }
                     }
@@ -338,6 +369,15 @@ public partial class CustomView : UserControl
                             counts.TryGetValue(key, out int n);
                             counts[key] = n + 1;
                         }
+                        else if (item == null)
+                        {
+                            if (ignoreNull)
+                                continue;
+
+                            var key = "null";
+                            counts.TryGetValue(key, out int n);
+                            counts[key] = n + 1;
+                        }
                     }
                     return [ConvertToSorted(counts)];
                 }
@@ -352,7 +392,12 @@ public partial class CustomView : UserControl
 
     private static object? Deserialize(string s)
     {
-        var parsed = JsonSerializer.Deserialize<JsonElement>(s);
+        var options = new JsonSerializerOptions
+        {
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        };
+        var parsed = JsonSerializer.Deserialize<JsonElement>(s, options);
         return JsonElementToObject(parsed);
     }
 
@@ -410,7 +455,7 @@ public partial class CustomView : UserControl
         return false;
     }
 
-    private static IEnumerable<object?> GetFiltered(string filterExpression, IEnumerable<object?> mapped)
+    private static IEnumerable<object?> GetFiltered(string filterExpression, IEnumerable<object?> mapped, bool ignoreNull)
     {
         var mappedValues = mapped.SelectMany(x =>
         {
@@ -421,6 +466,9 @@ public partial class CustomView : UserControl
             else
                 throw new Exception();
         });
+
+        if (ignoreNull)
+            mappedValues = mappedValues.Where(x => x != null);
 
         if (filterExpression == "[*]")
         {
@@ -467,6 +515,24 @@ public partial class CustomView : UserControl
                 continue;
             }
 
+            if (op == "[")
+            {
+                var prop = tokens[i++];
+                prop = prop[1..^1];
+                AddToNode(ref firstExpr, precedence, expression =>
+                {
+                    return new DotAccessExpression
+                    {
+                        Expression = expression,
+                        Prop = prop
+                    };
+                });
+                var end = tokens[i++];
+                if (end != "]")
+                    throw new Exception();
+                continue;
+            }
+
             var expr = GetExpression(tokens[i++]);
             AddToNode(ref firstExpr, precedence, expression =>
             {
@@ -482,7 +548,7 @@ public partial class CustomView : UserControl
         return firstExpr;
     }
 
-    private static char[] singleCharOperators = { '@', '.', '<', '>' };
+    private static char[] singleCharOperators = { '@', '.', '<', '>', '[', ']' };
     private static string[] doubleCharOperators = { "==", "!=", ">=", "<=", "&&", "||" };
     private static List<string> GetTokens(string s)
     {
@@ -506,10 +572,10 @@ public partial class CustomView : UserControl
                 i++;
                 continue;
             }
-            else if (IsLetter(s[i]))
+            else if (s[i] == '_' || IsLetter(s[i]))
             {
                 var start = i++;
-                while (i < s.Length && IsLetter(s[i]))
+                while (i < s.Length && (s[i] == '_' || IsLetter(s[i]) || IsDigit(s[i])))
                     i++;
                 tokens.Add(s[start..i]);
                 continue;
@@ -546,11 +612,17 @@ public partial class CustomView : UserControl
         return false;
     }
 
+    private static bool IsDigit(char c)
+    {
+        return c >= '0' && c <= '9';
+    }
+
     private static int GetPrecedence(string s)
     {
         return s switch
         {
             "." => 17,
+            "[" => 17,
             ">" => 9,
             ">=" => 9,
             "<" => 9,
