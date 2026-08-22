@@ -6,11 +6,17 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Avalonia.Controls;
+using Avalonia.Media;
+using AvaloniaEdit.Document;
+using AvaloniaEdit.TextMate;
+using TextMateSharp.Grammars;
 
 namespace jsonpath.Views;
 
 public partial class CustomView : UserControl
 {
+    private bool ignoreNextChange = false;
+
     private object? parsed;
     private JsonSerializerOptions jsonOptions;
     private JsonSerializerOptions jsonOptionsIgnoreNull;
@@ -27,16 +33,27 @@ public partial class CustomView : UserControl
         jsonOptionsIgnoreNull = CreateOptions();
         jsonOptionsIgnoreNull.Converters.Add(new JsonObjectConverter(jsonOptions));
 
+        SetJsonLanguage(richTextBox);
+        SetJsonLanguage(richTextBox2);
+
         errorMessage.Content = "";
+
         richTextBox.TextChanged += (sender, eventArgs) =>
         {
+            if (ignoreNextChange)
+            {
+                ignoreNextChange = false;
+                return;
+            }
+
             try
             {
                 errorMessage.Content = "";
                 if (string.IsNullOrEmpty(richTextBox.Text))
                     return;
                 parsed = Deserialize(richTextBox.Text);
-                richTextBox.Text = JsonSerializer.Serialize(parsed, jsonOptions);
+                ignoreNextChange = true;
+                richTextBox.Document.Text = JsonSerializer.Serialize(parsed, jsonOptions);
             }
             catch (Exception e)
             {
@@ -66,13 +83,22 @@ public partial class CustomView : UserControl
         };
     }
 
+    private static void SetJsonLanguage(AvaloniaEdit.TextEditor editor)
+    {
+        editor.Foreground = Brushes.White;
+
+        var _registryOptions = new RegistryOptions(ThemeName.DarkPlus);
+        var _textMateInstallation = editor.InstallTextMate(_registryOptions);
+        _textMateInstallation.SetGrammar(_registryOptions.GetScopeByLanguageId(_registryOptions.GetLanguageByExtension(".json").Id));
+    }
+
     private JsonSerializerOptions CreateOptions()
     {
         return new()
         {
             WriteIndented = true,
             IndentCharacter = ' ',
-            IndentSize = 3,
+            IndentSize = 2,
             Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         };
     }
@@ -152,7 +178,7 @@ public partial class CustomView : UserControl
 
             var text = JsonSerializer.Serialize(parsedList, ignoreNullCheckBox.IsChecked ?? false ? jsonOptionsIgnoreNull : jsonOptions);
             richTextBox2.Text = text;
-            //richTextBox2.ScrollToCaret(); // Scroll to top
+            richTextBox2.TextArea.Caret.BringCaretToView();
         }
         catch (Exception e)
         {

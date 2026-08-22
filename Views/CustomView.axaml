@@ -1,15 +1,46 @@
 <UserControl xmlns="https://github.com/avaloniaui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+			 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+			 xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+			 xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
 			 xmlns:vm="using:jsonpath.ViewModels"
-             mc:Ignorable="d"
-             x:Class="jsonpath.Views.CustomView"
+			 xmlns:edit="using:AvaloniaEdit"
+			 mc:Ignorable="d"
+			 x:Class="jsonpath.Views.CustomView"
 			 x:DataType="vm:ViewModelBase" 
 			 Loaded="OnLoaded">
 		<Grid ColumnDefinitions="2*,2*" RowDefinitions="2*,30,30,30" Margin="10">
-			<TextBox  Name="richTextBox" Grid.Row="0" Grid.Column="0" AcceptsReturn="True"></TextBox>
-			<TextBox  Name="richTextBox2" Grid.Row="0" Grid.Column="1" AcceptsReturn="True"></TextBox>
+			<Border Background="#1e1e1e"
+					BorderBrush="Black"
+					BorderThickness="1"
+					CornerRadius="2"
+					Grid.Row="0" Grid.Column="0">
+				<edit:TextEditor Name="richTextBox"
+							FontFamily="Consolas,Cascadia Code,Menlo,Monospace"
+							HorizontalScrollBarVisibility="Auto"
+							VerticalScrollBarVisibility="Visible"
+							FontWeight="Light"
+							LineNumbersMargin="10,0,20,0"
+							FontSize="12"
+							>
+				</edit:TextEditor>
+			</Border>
+
+			<Border Background="#1e1e1e"
+					BorderBrush="Black"
+					BorderThickness="1"
+					CornerRadius="2"
+					Grid.Row="0" Grid.Column="1">
+				<edit:TextEditor Name="richTextBox2"
+							FontFamily="Consolas,Cascadia Code,Menlo,Monospace"
+							HorizontalScrollBarVisibility="Auto"
+							VerticalScrollBarVisibility="Visible"
+							FontWeight="Light"
+							LineNumbersMargin="10,0,20,0"
+							FontSize="12"
+							>
+				</edit:TextEditor>
+			</Border>
+
 			<Label    Name="errorMessage" Grid.Row="1" Grid.Column="0" TextElement.Foreground="Red">This is an error message</Label>
 			<TextBox  Name="jsonPathTextBox" Grid.Row="1" Grid.Column="1"  Watermark="$.store[*].books[?(@.id > 5)].author%c%k%u%kc%uc"></TextBox>
 			<CheckBox Name="nullIfNotExistentCheckBox" Grid.Row="2" Grid.Column="1">Non existent property as null</CheckBox>
