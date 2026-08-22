@@ -65,12 +65,69 @@ public partial class CustomView : UserControl
             RerenderJson();
         };
 
-        jsonPathTextBox.KeyUp += (sender, e) =>
+        jsonPathTextBox.KeyDown += (sender, e) =>
         {
-            if (e.Key == Avalonia.Input.Key.Enter)
+            if (e.Key == Avalonia.Input.Key.Enter && e.KeyModifiers == Avalonia.Input.KeyModifiers.None)
             {
                 e.Handled = true;
                 RerenderJson();
+            }
+
+            if (e.Key == Avalonia.Input.Key.Space && e.KeyModifiers == Avalonia.Input.KeyModifiers.Control)
+            {
+                void SetNewText(string newText)
+                {
+                    jsonPathTextBox.Text = newText;
+                    jsonPathTextBox.CaretIndex = newText.Length;
+                }
+
+                static bool AllSameChars(IEnumerable<char> chars)
+                {
+                    var e = chars.GetEnumerator();
+                    e.MoveNext();
+                    var first = e.Current;
+                    while (e.MoveNext())
+                    {
+                        if (first != e.Current)
+                            return false;
+                    }
+                    return true;
+                }
+
+                e.Handled = true;
+                var text = jsonPathTextBox.Text ?? "";
+                var idx = text.LastIndexOf('.');
+                if (idx < 0)
+                    return;
+
+                var first = text[0..idx];
+                var second = text[(idx + 1)..];
+
+                bool ignoreNull = ignoreNullCheckBox.IsChecked ?? false;
+                bool nullIfNotExistent = nullIfNotExistentCheckBox.IsChecked ?? false;
+                var currentList = ApplyJsonPath(this.parsed, first, nullIfNotExistent, ignoreNull);
+                var keys = GetUniqueKeys(currentList, ignoreNull);
+
+                var matchingKeys = keys.Where(x => x.StartsWith(second)).ToList();
+                if (matchingKeys.Count == 1)
+                {
+                    SetNewText($"{first}.{matchingKeys[0]}");
+                }
+                else if (matchingKeys.Count > 1)
+                {
+                    var minKeyLength = matchingKeys.Min(x => x.Length);
+                    int i = 0;
+                    for (; i < minKeyLength; i++)
+                    {
+                        var ch = matchingKeys[0][i];
+                        if (!AllSameChars(matchingKeys.Select(k => k[i])))
+                            break;
+                    }
+                    if (i != second.Length)
+                    {
+                        SetNewText($"{first}.{matchingKeys[0][..i]}");
+                    }
+                }
             }
         };
 
@@ -150,6 +207,7 @@ public partial class CustomView : UserControl
     private void RerenderJson()
     {
         bool ignoreNull = ignoreNullCheckBox.IsChecked ?? false;
+        bool nullIfNotExistent = nullIfNotExistentCheckBox.IsChecked ?? false;
         try
         {
             errorMessage.Content = "";
@@ -160,22 +218,7 @@ public partial class CustomView : UserControl
                 return;
             }
 
-            var jsonPathParts = CustomSplit(jsonPath);
-
-            IEnumerable<object?> parsedList = new[] { this.parsed };
-
-            var nullIfNotExistent = nullIfNotExistentCheckBox.IsChecked ?? false;
-            foreach (var part in jsonPathParts)
-            {
-                if (part[0] == '.')
-                    parsedList = GetProperty(part[1..], parsedList, nullIfNotExistent, ignoreNull);
-                else if (part[0] == '[' && part[1] == '"')
-                    parsedList = GetProperty(part[2..^2], parsedList, nullIfNotExistent, ignoreNull);
-                else if (part[0] == '%')
-                    parsedList = ApplyDirective(part[1..], parsedList, ignoreNull);
-                else
-                    parsedList = GetFiltered(part, parsedList, ignoreNull);
-            }
+            var parsedList = ApplyJsonPath(this.parsed, jsonPath, nullIfNotExistent, ignoreNull);
 
             var text = JsonSerializer.Serialize(parsedList, ignoreNull ? jsonOptionsIgnoreNull : jsonOptions);
             richTextBox2.Text = text;
@@ -185,6 +228,27 @@ public partial class CustomView : UserControl
         {
             errorMessage.Content = $"Error: {e.Message}";
         }
+    }
+
+    private static IEnumerable<object?> ApplyJsonPath(object? parsed, string jsonPath, bool nullIfNotExistent, bool ignoreNull)
+    {
+        var jsonPathParts = CustomSplit(jsonPath);
+
+        IEnumerable<object?> parsedList = new[] { parsed };
+
+        foreach (var part in jsonPathParts)
+        {
+            if (part[0] == '.')
+                parsedList = GetProperty(part[1..], parsedList, nullIfNotExistent, ignoreNull);
+            else if (part[0] == '[' && part[1] == '"')
+                parsedList = GetProperty(part[2..^2], parsedList, nullIfNotExistent, ignoreNull);
+            else if (part[0] == '%')
+                parsedList = ApplyDirective(part[1..], parsedList, ignoreNull);
+            else
+                parsedList = GetFiltered(part, parsedList, ignoreNull);
+        }
+
+        return parsedList;
     }
 
     private static List<string> CustomSplit(string s)
@@ -285,34 +349,11 @@ public partial class CustomView : UserControl
                 }
             case "k":
                 {
-                    var set = new HashSet<string>();
-                    foreach (var item in elements)
-                    {
-                        foreach (var pair in EnumerateObject(item))
-                        {
-                            if (pair.Value == null && ignoreNull)
-                                continue;
-
-                            set.Add(pair.Key);
-                        }
-                    }
-                    return set;
+                    return GetUniqueKeys(elements, ignoreNull);
                 }
             case "kc":
                 {
-                    var counts = new Dictionary<string, int>();
-                    foreach (var item in elements)
-                    {
-                        foreach (var pair in EnumerateObject(item))
-                        {
-                            if (pair.Value == null && ignoreNull)
-                                continue;
-
-                            counts.TryGetValue(pair.Key, out int n);
-                            counts[pair.Key] = n + 1;
-                        }
-                    }
-                    return [ConvertToSorted(counts)];
+                    return GetUniqeKeyCounts(elements, ignoreNull);
                 }
             case "u":
                 {
@@ -383,6 +424,39 @@ public partial class CustomView : UserControl
                 }
         }
         throw new Exception($"Unknown directive: '{type}'");
+    }
+
+    private static HashSet<string> GetUniqueKeys(IEnumerable<object?> elements, bool ignoreNull)
+    {
+        var set = new HashSet<string>();
+        foreach (var item in elements)
+        {
+            foreach (var pair in EnumerateObject(item))
+            {
+                if (pair.Value == null && ignoreNull)
+                    continue;
+
+                set.Add(pair.Key);
+            }
+        }
+        return set;
+    }
+
+    private static IEnumerable<object?> GetUniqeKeyCounts(IEnumerable<object?> elements, bool ignoreNull)
+    {
+        var counts = new Dictionary<string, int>();
+        foreach (var item in elements)
+        {
+            foreach (var pair in EnumerateObject(item))
+            {
+                if (pair.Value == null && ignoreNull)
+                    continue;
+
+                counts.TryGetValue(pair.Key, out int n);
+                counts[pair.Key] = n + 1;
+            }
+        }
+        return [ConvertToSorted(counts)];
     }
 
     private static Dictionary<string, int> ConvertToSorted(Dictionary<string, int> o)
