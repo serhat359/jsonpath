@@ -73,7 +73,7 @@ public partial class CustomView : UserControl
                 RerenderJson();
             }
 
-            if (e.Key == Avalonia.Input.Key.Space && e.KeyModifiers == Avalonia.Input.KeyModifiers.Control)
+            if (e.Key == Avalonia.Input.Key.Tab && e.KeyModifiers == Avalonia.Input.KeyModifiers.None)
             {
                 void SetNewText(string newText)
                 {
